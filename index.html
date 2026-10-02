@@ -1,0 +1,1511 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>모바일 3D 지구형 포토 격자 글로브 & 지문 유전자 분석기</title>
+  <style>
+    :root {
+      --bg: #03050a;
+      --card-bg: rgba(10, 15, 26, 0.94);
+      --primary: #00ffcc;
+      --accent: #ff0077;
+      --gold: #ffbe0b;
+      --text: #e2e8f0;
+      --border: #1e293b;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      position: fixed;
+    }
+
+    #webgl-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 1;
+      display: block;
+    }
+
+    /* 상단 HUD 정보 표시 */
+    #hud-layer {
+      position: fixed;
+      top: env(safe-area-inset-top, 10px);
+      left: 10px;
+      right: 90px;
+      z-index: 50;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      pointer-events: none;
+      font-family: monospace;
+    }
+    .hud-chip {
+      background: rgba(8, 14, 26, 0.85);
+      border: 1px solid rgba(0, 255, 204, 0.35);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .hud-chip span { color: var(--primary); font-weight: bold; }
+    .rec-chip {
+      background: rgba(255, 0, 85, 0.25);
+      border-color: #ff0055;
+      color: #ff3366;
+      display: none;
+      animation: blink 1s infinite alternate;
+    }
+    .timer-chip { border-color: #38bdf8; background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+    .guess-chip { border-color: var(--gold); background: rgba(255, 190, 11, 0.15); color: var(--gold); }
+    .attempt-chip { border-color: #f43f5e; background: rgba(244, 63, 94, 0.15); color: #ff3366; }
+    .photo-chip { border-color: #a855f7; background: rgba(168, 85, 247, 0.15); color: #c084fc; }
+    @keyframes blink { from { opacity: 1; } to { opacity: 0.3; } }
+
+    /* 모바일 세로 4사분면 터치 컨트롤러 (Y:좌상, B:우상, X:좌하, A:우하) */
+    #touch-quadrant-layer {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 40;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      pointer-events: auto;
+    }
+    .quadrant-zone {
+      position: relative;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      touch-action: manipulation;
+    }
+    .quad-label {
+      position: absolute;
+      width: 58px;
+      height: 58px;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 1.5rem;
+      font-weight: 900;
+      pointer-events: none;
+      opacity: 0.35;
+      transition: all 0.15s ease-out;
+      background: rgba(8, 14, 26, 0.6);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.6);
+    }
+    /* 좌상: Y, 우상: B, 좌하: X, 우하: A */
+    #zone-y .quad-label { top: 75px; left: 20px; border: 2px solid #ffbe0b; color: #ffbe0b; }
+    #zone-b .quad-label { top: 75px; right: 20px; border: 2px solid #f43f5e; color: #f43f5e; }
+    #zone-x .quad-label { bottom: 25px; left: 20px; border: 2px solid #38bdf8; color: #38bdf8; }
+    #zone-a .quad-label { bottom: 25px; right: 20px; border: 2px solid #00ffcc; color: #00ffcc; }
+
+    .quadrant-zone:active .quad-label {
+      opacity: 1.0;
+      transform: scale(1.18);
+    }
+    #zone-y:active { background: radial-gradient(circle at top left, rgba(255, 190, 11, 0.18), transparent 70%); }
+    #zone-b:active { background: radial-gradient(circle at top right, rgba(244, 63, 94, 0.18), transparent 70%); }
+    #zone-x:active { background: radial-gradient(circle at bottom left, rgba(56, 189, 248, 0.18), transparent 70%); }
+    #zone-a:active { background: radial-gradient(circle at bottom right, rgba(0, 255, 204, 0.18), transparent 70%); }
+
+    /* 조준선 */
+    #crosshair-wrap {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 45;
+    }
+    #crosshair {
+      width: 24px; height: 24px;
+      position: relative;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(0, 255, 204, 0.85);
+      box-shadow: 0 0 8px #00ffcc;
+    }
+    #crosshair::before { top: 11px; left: 0; width: 24px; height: 2px; }
+    #crosshair::after { top: 0; left: 11px; width: 2px; height: 24px; }
+
+    /* 하단 알림창 (X, A 침범 방지) */
+    #bottom-message-bar {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom, 12px) + 20px);
+      left: 50%;
+      transform: translateX(-50%);
+      width: calc(100% - 176px);
+      max-width: 320px;
+      z-index: 48;
+      pointer-events: none;
+      display: flex;
+      justify-content: center;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    #motionHint {
+      width: 100%;
+      padding: 8px 12px;
+      border-radius: 14px;
+      background: rgba(5, 10, 20, 0.92);
+      border: 1.5px solid var(--primary);
+      color: #fff;
+      font-size: 0.78rem;
+      font-weight: bold;
+      text-align: center;
+      line-height: 1.35;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      word-break: keep-all;
+    }
+
+    /* 우측 상단 토글 컨트롤 */
+    .top-actions {
+      position: fixed;
+      top: env(safe-area-inset-top, 10px);
+      right: 10px;
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
+    }
+    .action-btn-small {
+      background: rgba(10, 16, 28, 0.92);
+      color: var(--primary);
+      border: 1px solid var(--primary);
+      padding: 5px 10px;
+      border-radius: 14px;
+      font-size: 0.72rem;
+      font-weight: bold;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    .action-btn-small.inactive {
+      color: #64748b;
+      border-color: #334155;
+      background: rgba(10, 16, 28, 0.7);
+    }
+
+    /* 대시보드 오버레이 */
+    #dashboard-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px 12px env(safe-area-inset-bottom, 16px) 12px;
+      overflow-y: auto;
+      background: rgba(3, 6, 12, 0.92);
+      backdrop-filter: blur(12px);
+    }
+    .panel-window {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 16px;
+      width: 100%;
+      max-width: 540px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.85);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .top-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 { font-size: 1.15rem; color: var(--primary); }
+    .sub-info { font-size: 0.75rem; color: #94a3b8; margin-top: 2px; }
+
+    /* 대용량 이미지 업로드 박스 */
+    .upload-section {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1.5px dashed #38bdf8;
+      border-radius: 10px;
+      padding: 12px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .upload-title {
+      font-size: 0.82rem;
+      font-weight: bold;
+      color: #38bdf8;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .upload-btns-row {
+      display: flex;
+      gap: 8px;
+    }
+    .upload-btn-label {
+      flex: 1;
+      padding: 8px 10px;
+      background: rgba(56, 189, 248, 0.15);
+      border: 1px solid #38bdf8;
+      border-radius: 6px;
+      color: #38bdf8;
+      font-size: 0.78rem;
+      font-weight: bold;
+      cursor: pointer;
+      display: inline-block;
+    }
+    .upload-btn-label:active { background: #38bdf8; color: #050811; }
+    .upload-status {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      font-family: monospace;
+    }
+
+    /* 지문 캔버스 */
+    .canvas-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+    }
+    #pointCanvas {
+      background-color: #040711;
+      border: 2px solid #1e2c44;
+      border-radius: 10px;
+      touch-action: none;
+      width: 100%;
+      max-width: 320px;
+      aspect-ratio: 1 / 1;
+      display: block;
+      box-shadow: inset 0 0 15px rgba(0, 255, 204, 0.08);
+    }
+
+    .slider-row {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 600;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+    }
+    input[type=range] {
+      width: 100%;
+      accent-color: var(--primary);
+      margin-bottom: 6px;
+      height: 24px;
+    }
+
+    .btn-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    button {
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: bold;
+      font-size: 0.9rem;
+      border: none;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    .btn-main { background: var(--primary); color: #060911; }
+    .btn-main:disabled { background: #1e293b; color: #475569; }
+    .btn-reset { background: #334155; color: #e2e8f0; }
+    .btn-record { background: #e11d48; color: #fff; }
+    .btn-record.recording { background: #475569; border: 1px solid #f43f5e; }
+
+    .result-terminal {
+      background: #040711;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      min-height: 80px;
+      max-height: 130px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 0.72rem;
+    }
+    .dna-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .dna-chip {
+      background: #0a1120;
+      border: 1px solid #1e293b;
+      padding: 4px;
+      border-radius: 4px;
+      text-align: center;
+    }
+    .dna-chip .loc { color: #64748b; font-size: 0.6rem; }
+    .dna-chip .seq { color: var(--primary); font-size: 0.78rem; font-weight: bold; }
+
+    #saveModal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85);
+      z-index: 200;
+      justify-content: center;
+      align-items: center;
+      padding: 16px;
+    }
+    .modal-box {
+      background: #0a1222;
+      border: 2px solid var(--primary);
+      border-radius: 12px;
+      padding: 20px;
+      width: 100%;
+      max-width: 360px;
+    }
+    .modal-box h3 { color: var(--primary); margin-bottom: 8px; font-size: 1.1rem; }
+    .modal-box input {
+      width: 100%;
+      background: #050811;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      padding: 10px;
+      color: #fff;
+      font-size: 0.9rem;
+      margin: 10px 0 16px 0;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <canvas id="webgl-canvas"></canvas>
+
+  <!-- HUD 레이어 -->
+  <div id="hud-layer">
+    <div class="hud-chip">SCORE: <span id="hudScore">0</span></div>
+    <div class="hud-chip">COMBO: <span id="hudCombo">0x</span></div>
+    <div class="hud-chip timer-chip">남은 시간: <span id="hudRemainingTime">01:00</span></div>
+    <div class="hud-chip guess-chip">TARGET: <span id="hudTargetEffect">-</span></div>
+    <div class="hud-chip attempt-chip">시도: <span id="hudAttempts">0 / 2회 안전</span></div>
+    <div class="hud-chip photo-chip">로드된 이미지: <span id="hudPhotoCount">0장</span></div>
+    <div class="hud-chip rec-chip" id="hudRec">● REC <span id="hudRecTime">00:00</span> / 03:00</div>
+  </div>
+
+  <div class="top-actions">
+    <button class="action-btn-small" id="ui-collapse-btn">3D 모드</button>
+    <button class="action-btn-small" id="toggle-hint-btn">💬 알림 켬</button>
+  </div>
+
+  <div id="crosshair-wrap">
+    <div id="crosshair"></div>
+  </div>
+
+  <div id="bottom-message-bar">
+    <div id="motionHint">화면 4사분면(Y, B, X, A)을 터치해 목표 효과를 맞추세요</div>
+  </div>
+
+  <!-- 4사분면 모바일 터치 -->
+  <div id="touch-quadrant-layer">
+    <div class="quadrant-zone" id="zone-y"><div class="quad-label">Y</div></div>
+    <div class="quadrant-zone" id="zone-b"><div class="quad-label">B</div></div>
+    <div class="quadrant-zone" id="zone-x"><div class="quad-label">X</div></div>
+    <div class="quadrant-zone" id="zone-a"><div class="quad-label">A</div></div>
+  </div>
+
+  <!-- 메인 UI 대시보드 -->
+  <div id="dashboard-overlay">
+    <div class="panel-window">
+      <div class="top-header">
+        <div>
+          <h1>지문 유전자 & 지구형 포토 격자 글로브 슈팅</h1>
+          <div class="sub-info">이미지 풀을 등록하고 패널에 점 10~20개를 터치해 게임을 시작하세요.</div>
+        </div>
+        <button class="btn-reset" id="btnResetPoints" style="padding: 6px 10px; font-size: 0.78rem;">초기화</button>
+      </div>
+
+      <!-- 1GB급 대용량 이미지 / 사진 파일 업로드 인터페이스 -->
+      <div class="upload-section">
+        <div class="upload-title">
+          <span>🖼️ 글로브 격자용 커스텀 이미지 풀 (최대 1GB)</span>
+          <span id="txtUploadSummary" style="color:#00ffcc; font-size:0.75rem;">0장 준비됨</span>
+        </div>
+        <div class="upload-btns-row">
+          <label class="upload-btn-label">
+            📁 여러 파일 선택 (다중 선택)
+            <input type="file" id="fileInputMultiple" multiple accept="image/*" style="display:none;">
+          </label>
+          <label class="upload-btn-label">
+            🗂️ 폴더 통째로 올리기
+            <input type="file" id="fileInputFolder" webkitdirectory directory multiple style="display:none;">
+          </label>
+        </div>
+        <div class="upload-status" id="txtUploadDetail">
+          이미지를 등록하면 매번 날아오는 글로브의 6대역 직사각형 격자에 중복 없이 무작위 할당됩니다.
+        </div>
+      </div>
+
+      <div class="canvas-wrap">
+        <div style="width: 100%; max-width: 320px; display: flex; justify-content: space-between; margin-bottom: 4px;">
+          <span style="font-weight: bold; color: var(--primary); font-size: 0.8rem;" id="txtPointCount">특징점: 0개 찍힘</span>
+          <span style="font-size: 0.72rem; color: #8899a6;">(패널 안을 직접 터치)</span>
+        </div>
+        <canvas id="pointCanvas" width="320" height="320"></canvas>
+      </div>
+
+      <div class="slider-row">
+        <span>게임 진행 시간</span>
+        <span style="color:var(--primary);" id="txtDuration">1.0 분 (60 초)</span>
+      </div>
+      <input type="range" id="sliderTime" min="0.5" max="5" step="0.5" value="1.0">
+
+      <div class="btn-wrap">
+        <button class="btn-main" id="btnStart" disabled>패널에 점을 1개 이상 찍어주세요</button>
+        <button class="btn-record" id="btnRecordToggle">📹 화면 녹화 시작 (최대 3분)</button>
+      </div>
+
+      <div class="result-terminal" id="resultView">
+        <div style="color:#64748b;">패널에 점을 찍고 시작하면 유전자 분석 후 지구형 스피닝 포토 글로브가 발사됩니다.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 비디오 저장 모달 -->
+  <div id="saveModal">
+    <div class="modal-box">
+      <h3>💾 녹화 영상 다운로드</h3>
+      <p style="font-size:0.8rem; color:#94a3b8;">촬영된 게임 영상의 파일명을 지정하세요.</p>
+      <input type="text" id="recordFileName" value="Mobile_PhotoGlobe_Session">
+      <div style="display:flex; gap:8px;">
+        <button class="btn-main" id="btnConfirmSave" style="flex:1;">저장</button>
+        <button class="btn-reset" id="btnCancelSave" style="flex:1;">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // -------------------------------------------------------------------------
+    // 1. 상태 및 게임 효과 정의
+    // -------------------------------------------------------------------------
+    const EFFECT_TYPES = [
+      { id: "SHATTER",   name: "산산조각 (Shatter)" },
+      { id: "SHRINK",    name: "점 소멸 (Shrink)" },
+      { id: "PASS",      name: "통과 (Pass)" },
+      { id: "BOOKSHELF", name: "책장 안착 (Bookshelf)" }
+    ];
+
+    window.APP_STATE = {
+      isComputing: false,
+      isSessionRunning: false,
+      sessionTotalSeconds: 60,
+      sessionRemainingSeconds: 60,
+      points: [],
+      score: 0,
+      combo: 0,
+      attemptCount: 0,
+      currentTargetEffect: null,
+      buttonMapping: {},
+      isRecording: false,
+      recElapsedSeconds: 0,
+      isHintVisible: true,
+      imagePool: [], // 사용자가 업로드한 Image/ImageBitmap 풀
+      spawnGlobeFn: null
+    };
+
+    // -------------------------------------------------------------------------
+    // 2. 1GB급 대용량 이미지 풀 관리 및 로더
+    // -------------------------------------------------------------------------
+    const ImagePoolManager = {
+      images: [],
+      totalByteSize: 0,
+
+      async handleFileList(files) {
+        if (!files || files.length === 0) return;
+        const validFiles = Array.from(files).filter(f => f.type.startsWith('image/'));
+        if (validFiles.length === 0) return;
+
+        const detailEl = document.getElementById('txtUploadDetail');
+        const summaryEl = document.getElementById('txtUploadSummary');
+        const hudPhotoEl = document.getElementById('hudPhotoCount');
+
+        detailEl.textContent = `이미지 최적화 디코딩 중... (${validFiles.length}개 파일 처리)`;
+
+        let addedCount = 0;
+        for (const file of validFiles) {
+          try {
+            this.totalByteSize += file.size;
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            await new Promise((resolve) => {
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+            });
+            this.images.push(img);
+            addedCount++;
+          } catch (e) {}
+        }
+
+        const mbSize = (this.totalByteSize / (1024 * 1024)).toFixed(1);
+        summaryEl.textContent = `${this.images.length}장 (${mbSize} MB)`;
+        hudPhotoEl.textContent = `${this.images.length}장`;
+        detailEl.textContent = `성공적으로 로드되었습니다! 총 ${this.images.length}장의 사진이 매 비행 시 겹침 없이 격자에 투영됩니다.`;
+        window.APP_STATE.imagePool = this.images;
+      },
+
+      getRandomImages(count) {
+        if (this.images.length === 0) return [];
+        // 비복원 무작위 셔플 추출 (한 번도 겹치지 않게)
+        const shuffled = [...this.images].sort(() => Math.random() - 0.5);
+        if (shuffled.length >= count) {
+          return shuffled.slice(0, count);
+        }
+        // 업로드 사진 수가 칸 수보다 적을 경우 순환 채움
+        const result = [];
+        for (let i = 0; i < count; i++) {
+          result.push(shuffled[i % shuffled.length]);
+        }
+        return result;
+      }
+    };
+
+    document.getElementById('fileInputMultiple').addEventListener('change', (e) => {
+      ImagePoolManager.handleFileList(e.target.files);
+    });
+    document.getElementById('fileInputFolder').addEventListener('change', (e) => {
+      ImagePoolManager.handleFileList(e.target.files);
+    });
+
+    // -------------------------------------------------------------------------
+    // 3. 구면 직사각형 격자 텍스처 합성 엔진 (위도 6칸 × 경도 분할 직사각형)
+    // -------------------------------------------------------------------------
+    const GlobeTextureGenerator = {
+      // 적도 기준: 북극 3칸, 남극 3칸 (총 6개 위도 층)
+      // 경도 8등분 -> 총 48개의 직사각형 포토 프레임 셀
+      LAT_ROWS: 6,
+      LON_COLS: 8,
+      CANVAS_W: 2048,
+      CANVAS_H: 1024,
+
+      createGlobeTexture() {
+        const canvas = document.createElement('canvas');
+        canvas.width = this.CANVAS_W;
+        canvas.height = this.CANVAS_H;
+        const ctx = canvas.getContext('2d');
+
+        // 베이스 어두운 테크니컬 구면 바탕
+        ctx.fillStyle = '#060a16';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const totalCells = this.LAT_ROWS * this.LON_COLS;
+        const assignedImages = ImagePoolManager.getRandomImages(totalCells);
+
+        const cellW = this.CANVAS_W / this.LON_COLS;
+        const cellH = this.CANVAS_H / this.LAT_ROWS;
+
+        let imgIdx = 0;
+        for (let r = 0; r < this.LAT_ROWS; r++) {
+          const y = r * cellH;
+          // 위도별 라벨
+          let latZone = "";
+          if (r === 0) latZone = "북극권 (N3)";
+          else if (r === 1) latZone = "북중위 (N2)";
+          else if (r === 2) latZone = "북적도 (N1)";
+          else if (r === 3) latZone = "남적도 (S1)";
+          else if (r === 4) latZone = "남중위 (S2)";
+          else if (r === 5) latZone = "남극권 (S3)";
+
+          for (let c = 0; c < this.LON_COLS; c++) {
+            const x = c * cellW;
+            const pad = 4; // 직사각형 테두리 마진
+
+            if (assignedImages.length > 0 && assignedImages[imgIdx]) {
+              const img = assignedImages[imgIdx];
+              try {
+                ctx.drawImage(img, x + pad, y + pad, cellW - pad * 2, cellH - pad * 2);
+              } catch (e) {
+                this.drawFallbackGrid(ctx, x + pad, y + pad, cellW - pad * 2, cellH - pad * 2, r, c);
+              }
+            } else {
+              this.drawFallbackGrid(ctx, x + pad, y + pad, cellW - pad * 2, cellH - pad * 2, r, c);
+            }
+
+            // 직사각형 격자 라인 강조
+            ctx.strokeStyle = (r === 2 || r === 3) ? '#00ffcc' : 'rgba(56, 189, 248, 0.6)';
+            ctx.lineWidth = (r === 2 && y + cellH === this.CANVAS_H / 2) ? 4 : 2; // 적도 강조선
+            ctx.strokeRect(x + pad, y + pad, cellW - pad * 2, cellH - pad * 2);
+
+            imgIdx++;
+          }
+        }
+
+        // 적도선 (Equator) 황금색 발광 라인
+        ctx.strokeStyle = '#ffbe0b';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(0, this.CANVAS_H / 2);
+        ctx.lineTo(this.CANVAS_W, this.CANVAS_H / 2);
+        ctx.stroke();
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        return texture;
+      },
+
+      drawFallbackGrid(ctx, x, y, w, h, r, c) {
+        // 업로드 이미지가 없을 때의 네온 기하 격자
+        const hues = [170, 200, 280, 320, 45, 120];
+        const hue = hues[(r * this.LON_COLS + c) % hues.length];
+        ctx.fillStyle = `hsl(${hue}, 70%, 15%)`;
+        ctx.fillRect(x, y, w, h);
+
+        ctx.fillStyle = `hsl(${hue}, 90%, 65%)`;
+        ctx.font = 'bold 22px monospace';
+        ctx.fillText(`GRID [${r+1},${c+1}]`, x + 12, y + 36);
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = '16px monospace';
+        ctx.fillText(r < 3 ? `북반구 #${3-r}` : `남반구 #${r-2}`, x + 12, y + 64);
+      }
+    };
+
+    // -------------------------------------------------------------------------
+    // 4. Web Audio API 신디사이저 엔진
+    // -------------------------------------------------------------------------
+    const SoundEngine = {
+      ctx: null,
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) this.ctx = new AudioContext();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      },
+      playSingleBeep(freq = 920, duration = 0.08, startTimeOffset = 0) {
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime + startTimeOffset;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(freq, t);
+          gain.gain.setValueAtTime(0.2, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + duration + 0.01);
+        } catch (e) {}
+      },
+      playDoubleWarningBeep() {
+        this.playSingleBeep(920, 0.08, 0.0);
+        this.playSingleBeep(920, 0.08, 0.14);
+      },
+      playCrumpleSound() { // 점 소멸 구겨짐
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime, dur = 0.45;
+          const bufferSize = this.ctx.sampleRate * dur;
+          const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const output = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+          const whiteNoise = this.ctx.createBufferSource();
+          whiteNoise.buffer = noiseBuffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.frequency.setValueAtTime(3200, t);
+          filter.frequency.exponentialRampToValueAtTime(250, t + dur);
+          filter.Q.setValueAtTime(3.0, t);
+
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.5, t);
+          gain.gain.exponentialRampToValueAtTime(0.01, t + dur);
+          whiteNoise.connect(filter);
+          filter.connect(gain);
+          gain.connect(this.ctx.destination);
+          whiteNoise.start(t);
+          whiteNoise.stop(t + dur);
+        } catch (e) {}
+      },
+      playWhooshSound() { // 책장 안착 휘익
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime, dur = 0.55;
+          const osc = this.ctx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(120, t);
+          osc.frequency.exponentialRampToValueAtTime(1400, t + dur * 0.7);
+          osc.frequency.exponentialRampToValueAtTime(400, t + dur);
+          const gain = this.ctx.createGain();
+          gain.gain.setValueAtTime(0.001, t);
+          gain.gain.linearRampToValueAtTime(0.4, t + dur * 0.5);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + dur);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + dur);
+        } catch (e) {}
+      },
+      playExplosionSound() { // 산산조각 폭발
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime, dur = 0.5;
+          const subOsc = this.ctx.createOscillator();
+          subOsc.type = 'triangle';
+          subOsc.frequency.setValueAtTime(220, t);
+          subOsc.frequency.exponentialRampToValueAtTime(30, t + dur);
+          const subGain = this.ctx.createGain();
+          subGain.gain.setValueAtTime(0.7, t);
+          subGain.gain.exponentialRampToValueAtTime(0.01, t + dur);
+          subOsc.connect(subGain);
+          subGain.connect(this.ctx.destination);
+          subOsc.start(t);
+          subOsc.stop(t + dur);
+
+          const bufferSize = this.ctx.sampleRate * dur;
+          const noiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+          const output = noiseBuffer.getChannelData(0);
+          for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+          const noise = this.ctx.createBufferSource();
+          noise.buffer = noiseBuffer;
+          const filter = this.ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.setValueAtTime(1800, t);
+          filter.frequency.linearRampToValueAtTime(200, t + dur);
+          const noiseGain = this.ctx.createGain();
+          noiseGain.gain.setValueAtTime(0.65, t);
+          noiseGain.gain.exponentialRampToValueAtTime(0.01, t + dur);
+          noise.connect(filter);
+          filter.connect(noiseGain);
+          noiseGain.connect(this.ctx.destination);
+          noise.start(t);
+          noise.stop(t + dur);
+        } catch (e) {}
+      }
+    };
+
+    function formatTime(sec) {
+      const m = Math.floor(sec / 60).toString().padStart(2, '0');
+      const s = (Math.max(0, Math.floor(sec)) % 60).toString().padStart(2, '0');
+      return `${m}:${s}`;
+    }
+
+    // -------------------------------------------------------------------------
+    // 5. 녹화 매니저 (최대 3분 Canvas 녹화)
+    // -------------------------------------------------------------------------
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recordedBlob = null;
+    let recTimerInterval = null;
+    const MAX_REC_SECONDS = 180;
+
+    function initVideoRecorder(captureCanvas) {
+      const btnRecord = document.getElementById('btnRecordToggle');
+      const hudRec = document.getElementById('hudRec');
+      const hudRecTime = document.getElementById('hudRecTime');
+      const saveModal = document.getElementById('saveModal');
+      const btnConfirmSave = document.getElementById('btnConfirmSave');
+      const btnCancelSave = document.getElementById('btnCancelSave');
+      const recordFileName = document.getElementById('recordFileName');
+
+      function stopRecording() {
+        if (recTimerInterval) { clearInterval(recTimerInterval); recTimerInterval = null; }
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        window.APP_STATE.isRecording = false;
+        btnRecord.classList.remove('recording');
+        btnRecord.textContent = '📹 화면 녹화 시작 (최대 3분)';
+        hudRec.style.display = 'none';
+      }
+
+      btnRecord.addEventListener('click', () => {
+        if (!window.APP_STATE.isRecording) {
+          try {
+            const stream = captureCanvas.captureStream(30);
+            recordedChunks = [];
+            let mimeType = 'video/webm; codecs=vp9';
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              mimeType = 'video/webm; codecs=vp8';
+              if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+              if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/mp4';
+            }
+            mediaRecorder = new MediaRecorder(stream, { mimeType });
+            mediaRecorder.ondataavailable = (e) => {
+              if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+            };
+            mediaRecorder.onstop = () => {
+              recordedBlob = new Blob(recordedChunks, { type: mimeType });
+              const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+              recordFileName.value = `Mobile_PhotoGlobe_${dateStr}`;
+              saveModal.style.display = 'flex';
+            };
+
+            mediaRecorder.start(1000);
+            window.APP_STATE.isRecording = true;
+            window.APP_STATE.recElapsedSeconds = 0;
+            btnRecord.classList.add('recording');
+            btnRecord.textContent = '⏹️ 녹화 중지 및 파일 다운로드';
+            hudRec.style.display = 'block';
+            hudRecTime.textContent = "00:00";
+
+            recTimerInterval = setInterval(() => {
+              window.APP_STATE.recElapsedSeconds += 1;
+              hudRecTime.textContent = formatTime(window.APP_STATE.recElapsedSeconds);
+              if (window.APP_STATE.recElapsedSeconds >= MAX_REC_SECONDS) stopRecording();
+            }, 1000);
+          } catch (err) {
+            alert("이 브라우저에서는 캔버스 녹화가 지원되지 않습니다: " + err.message);
+          }
+        } else {
+          stopRecording();
+        }
+      });
+
+      btnConfirmSave.addEventListener('click', () => {
+        if (!recordedBlob) return;
+        let fname = recordFileName.value.trim() || "Mobile_PhotoGlobe_Session";
+        if (!fname.includes('.')) fname += '.webm';
+        const url = URL.createObjectURL(recordedBlob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fname;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+          recordedBlob = null;
+        }, 300);
+        saveModal.style.display = 'none';
+      });
+
+      btnCancelSave.addEventListener('click', () => {
+        saveModal.style.display = 'none';
+        recordedBlob = null;
+      });
+    }
+
+    // -------------------------------------------------------------------------
+    // 6. 지문 특징점 & 유전자 시퀀싱 패널
+    // -------------------------------------------------------------------------
+    let sessionTimerInterval = null;
+
+    (function initMobileDashboard() {
+      const pCanvas = document.getElementById('pointCanvas');
+      const pCtx = pCanvas.getContext('2d');
+      const txtPointCount = document.getElementById('txtPointCount');
+      const sliderTime = document.getElementById('sliderTime');
+      const txtDuration = document.getElementById('txtDuration');
+      const btnStart = document.getElementById('btnStart');
+      const btnResetPoints = document.getElementById('btnResetPoints');
+      const resultView = document.getElementById('resultView');
+
+      function addPoint(clientX, clientY) {
+        if (window.APP_STATE.isComputing) return;
+        const rect = pCanvas.getBoundingClientRect();
+        const normX = Math.max(0.03, Math.min(0.97, (clientX - rect.left) / rect.width));
+        const normY = Math.max(0.03, Math.min(0.97, (clientY - rect.top) / rect.height));
+
+        window.APP_STATE.points.push({
+          order: window.APP_STATE.points.length + 1,
+          normX, normY
+        });
+        renderPoints();
+        updatePointUI();
+      }
+
+      pCanvas.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        SoundEngine.init();
+        addPoint(e.clientX, e.clientY);
+      });
+
+      function renderPoints() {
+        pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+        
+        pCtx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        pCtx.lineWidth = 1;
+        const step = pCanvas.width / 8;
+        for (let i = step; i < pCanvas.width; i += step) {
+          pCtx.beginPath(); pCtx.moveTo(i, 0); pCtx.lineTo(i, pCanvas.height); pCtx.stroke();
+          pCtx.beginPath(); pCtx.moveTo(0, i); pCtx.lineTo(pCanvas.width, i); pCtx.stroke();
+        }
+
+        const pts = window.APP_STATE.points;
+        if (pts.length > 1) {
+          pCtx.strokeStyle = "rgba(0, 255, 204, 0.5)";
+          pCtx.lineWidth = 2;
+          pCtx.setLineDash([4, 4]);
+          pCtx.beginPath();
+          pCtx.moveTo(pts[0].normX * pCanvas.width, pts[0].normY * pCanvas.height);
+          for (let i = 1; i < pts.length; i++) {
+            pCtx.lineTo(pts[i].normX * pCanvas.width, pts[i].normY * pCanvas.height);
+          }
+          pCtx.stroke();
+          pCtx.setLineDash([]);
+        }
+
+        pts.forEach((p, idx) => {
+          const px = p.normX * pCanvas.width;
+          const py = p.normY * pCanvas.height;
+          pCtx.fillStyle = "rgba(0, 255, 204, 0.25)";
+          pCtx.beginPath(); pCtx.arc(px, py, 11, 0, Math.PI * 2); pCtx.fill();
+          pCtx.fillStyle = (idx === pts.length - 1) ? "#ff0077" : "#00ffcc";
+          pCtx.beginPath(); pCtx.arc(px, py, 5, 0, Math.PI * 2); pCtx.fill();
+          pCtx.fillStyle = "#ffffff";
+          pCtx.font = "bold 11px monospace";
+          pCtx.fillText(p.order, px + 7, py - 7);
+        });
+      }
+
+      function updatePointUI() {
+        const count = window.APP_STATE.points.length;
+        txtPointCount.textContent = `특징점: ${count}개 찍힘`;
+        if (count >= 1 && !window.APP_STATE.isComputing) {
+          btnStart.disabled = false;
+          btnStart.textContent = `유전자 분석 및 포토 글로브 발사 (${count}개 점)`;
+        } else if (!window.APP_STATE.isComputing) {
+          btnStart.disabled = true;
+          btnStart.textContent = "패널에 점을 1개 이상 찍어주세요";
+        }
+      }
+
+      sliderTime.addEventListener('input', () => {
+        const val = parseFloat(sliderTime.value);
+        const totalSec = Math.round(val * 60);
+        window.APP_STATE.sessionTotalSeconds = totalSec;
+        window.APP_STATE.sessionRemainingSeconds = totalSec;
+        txtDuration.textContent = `${val.toFixed(1)} 분 (${totalSec} 초)`;
+        document.getElementById('hudRemainingTime').textContent = formatTime(totalSec);
+      });
+
+      function resetAll() {
+        if (sessionTimerInterval) { clearInterval(sessionTimerInterval); sessionTimerInterval = null; }
+        window.APP_STATE.isComputing = false;
+        window.APP_STATE.isSessionRunning = false;
+        window.APP_STATE.sessionRemainingSeconds = window.APP_STATE.sessionTotalSeconds;
+        window.APP_STATE.points = [];
+        window.APP_STATE.score = 0;
+        window.APP_STATE.combo = 0;
+        window.APP_STATE.attemptCount = 0;
+
+        document.getElementById('hudScore').textContent = "0";
+        document.getElementById('hudCombo').textContent = "0x";
+        document.getElementById('hudAttempts').textContent = "0 / 2회 안전";
+        document.getElementById('hudRemainingTime').textContent = formatTime(window.APP_STATE.sessionTotalSeconds);
+
+        btnStart.disabled = true;
+        btnStart.textContent = "패널에 점을 1개 이상 찍어주세요";
+        resultView.innerHTML = '<div style="color:#64748b;">패널에 점을 찍고 시작하면 유전자 분석 후 지구형 스피닝 포토 글로브가 발사됩니다.</div>';
+        renderPoints();
+        updatePointUI();
+
+        document.getElementById('dashboard-overlay').style.display = 'flex';
+        document.getElementById('ui-collapse-btn').textContent = '3D 모드';
+      }
+
+      btnResetPoints.addEventListener('click', resetAll);
+
+      btnStart.addEventListener('click', () => {
+        if (window.APP_STATE.points.length === 0) return;
+        SoundEngine.init();
+
+        window.APP_STATE.isComputing = true;
+        window.APP_STATE.isSessionRunning = true;
+        btnStart.disabled = true;
+        btnStart.textContent = "유전자 회로 연산 완료!";
+
+        const pts = window.APP_STATE.points;
+        let seed = pts.reduce((acc, p) => acc + (p.normX * 1000 + p.normY * 2000) * p.order, 1337);
+        const bases = ["A", "C", "G", "T"];
+        const genotypes = [];
+        const bytes = [];
+
+        for (let i = 0; i < 20; i++) {
+          seed = (seed * 9301 + 49297) % 233280;
+          const b = Math.floor((seed / 233280) * 256);
+          bytes.push(b);
+          genotypes.push(`${bases[b & 3]}/${bases[(b >> 2) & 3]}`);
+        }
+
+        const signature = bytes.slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+        let html = `<div style="color:var(--primary); font-weight:bold; margin-bottom:4px;">분석 서명: ${signature}</div>`;
+        html += '<div class="dna-grid">';
+        for (let i = 0; i < 20; i++) {
+          html += `<div class="dna-chip"><div class="loc">L-${i+1}</div><div class="seq">${genotypes[i]}</div></div>`;
+        }
+        html += '</div>';
+        resultView.innerHTML = html;
+
+        setTimeout(() => {
+          document.getElementById('dashboard-overlay').style.display = 'none';
+          document.getElementById('ui-collapse-btn').textContent = '대시보드';
+        }, 500);
+
+        const durationSec = Math.round(parseFloat(sliderTime.value) * 60);
+        window.APP_STATE.sessionTotalSeconds = durationSec;
+        window.APP_STATE.sessionRemainingSeconds = durationSec;
+        document.getElementById('hudRemainingTime').textContent = formatTime(durationSec);
+
+        if (sessionTimerInterval) clearInterval(sessionTimerInterval);
+        sessionTimerInterval = setInterval(() => {
+          if (!window.APP_STATE.isSessionRunning) return;
+          window.APP_STATE.sessionRemainingSeconds -= 1;
+          const rem = Math.max(0, window.APP_STATE.sessionRemainingSeconds);
+          document.getElementById('hudRemainingTime').textContent = formatTime(rem);
+
+          if (rem <= 0) {
+            clearInterval(sessionTimerInterval);
+            sessionTimerInterval = null;
+            window.APP_STATE.isSessionRunning = false;
+            document.getElementById('motionHint').textContent = "⏳ 게임 시간이 완료되었습니다!";
+            document.getElementById('motionHint').style.borderColor = "#38bdf8";
+          }
+        }, 1000);
+
+        if (window.APP_STATE.spawnGlobeFn) {
+          window.APP_STATE.spawnGlobeFn();
+        }
+      });
+
+      renderPoints();
+      updatePointUI();
+    })();
+
+    // -------------------------------------------------------------------------
+    // 7. 3D WebGL 환경 & 지구형 틸트 자전 포토 글로브 렌더러
+    // -------------------------------------------------------------------------
+    (function init3DWorld() {
+      const canvas = document.getElementById('webgl-canvas');
+      const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: "high-performance" });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.0));
+      renderer.setClearColor(0x020408, 1.0);
+
+      initVideoRecorder(canvas);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 150);
+      camera.position.set(0, 1.6, 0);
+      camera.lookAt(0, 1.6, -10);
+
+      // 우주 배경 돔 & 바닥 그리드
+      const domeGeo = new THREE.SphereGeometry(38, 36, 24);
+      const domeMat = new THREE.ShaderMaterial({
+        side: THREE.BackSide,
+        depthWrite: false,
+        vertexShader: `
+          varying vec3 vWorldPos;
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            vec4 wp = modelMatrix * vec4(position, 1.0);
+            vWorldPos = wp.xyz;
+            gl_Position = projectionMatrix * viewMatrix * wp;
+          }
+        `,
+        fragmentShader: `
+          precision mediump float;
+          varying vec3 vWorldPos;
+          varying vec2 vUv;
+          void main() {
+            float h = clamp(vWorldPos.y / 38.0, 0.0, 1.0);
+            vec3 bgCol = mix(vec3(0.012, 0.018, 0.032), vec3(0.003, 0.005, 0.01), h);
+            vec2 grid = abs(fract(vUv * vec2(36.0, 18.0) - 0.5) - 0.5) / fwidth(vUv * vec2(36.0, 18.0));
+            float line = 1.0 - min(min(grid.x, grid.y), 1.0);
+            vec3 gridCol = vec3(0.0, 0.8, 0.7) * line * 0.15;
+            gl_FragColor = vec4(bgCol + gridCol, 1.0);
+          }
+        `
+      });
+      scene.add(new THREE.Mesh(domeGeo, domeMat));
+
+      const floorGrid = new THREE.GridHelper(70, 35, 0x00ffcc, 0x1e293b);
+      floorGrid.position.y = 0.01;
+      scene.add(floorGrid);
+
+      // 거대 책장
+      const bookshelfGroup = new THREE.Group();
+      bookshelfGroup.position.set(5.5, 0, -10.0);
+      bookshelfGroup.rotation.y = -Math.PI / 5.5;
+
+      const shelfFrameMat = new THREE.MeshBasicMaterial({ color: 0x1e293b });
+      const shelfWoodMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+      const backMesh = new THREE.Mesh(new THREE.BoxGeometry(7.2, 5.5, 0.15), shelfWoodMat);
+      backMesh.position.set(0, 2.75, -0.6);
+      bookshelfGroup.add(backMesh);
+
+      const shelfRows = 4, shelfCols = 4;
+      const shelfSlots = [];
+      for (let r = 0; r <= shelfRows; r++) {
+        const board = new THREE.Mesh(new THREE.BoxGeometry(7.0, 0.15, 1.2), shelfFrameMat);
+        board.position.set(0, 0.5 + r * 1.3, 0);
+        bookshelfGroup.add(board);
+      }
+      for (let c = 0; c <= shelfCols; c++) {
+        const divider = new THREE.Mesh(new THREE.BoxGeometry(0.12, shelfRows * 1.3, 1.1), shelfFrameMat);
+        const xPos = -3.3 + c * (6.6 / shelfCols);
+        divider.position.set(xPos, 0.5 + (shelfRows * 1.3) / 2, 0);
+        bookshelfGroup.add(divider);
+      }
+      for (let r = 0; r < shelfRows; r++) {
+        for (let c = 0; c < shelfCols; c++) {
+          shelfSlots.push(new THREE.Vector3(-3.3 + (c + 0.5) * (6.6 / shelfCols), 0.5 + (r + 0.5) * 1.3, 0));
+        }
+      }
+      scene.add(bookshelfGroup);
+
+      // 파편 풀
+      const SHARD_POOL_SIZE = 45;
+      const shardPool = [];
+      const shardGeo = new THREE.TetrahedronGeometry(0.22, 0);
+      for (let i = 0; i < SHARD_POOL_SIZE; i++) {
+        const mat = new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0 });
+        const m = new THREE.Mesh(shardGeo, mat);
+        m.visible = false;
+        scene.add(m);
+        shardPool.push({ mesh: m, mat: mat, active: false, vel: new THREE.Vector3(), rotVel: new THREE.Vector3(), life: 0, maxLife: 1.0 });
+      }
+
+      function spawnShatterShards(centerPos, colorHex) {
+        let count = 0;
+        for (let i = 0; i < SHARD_POOL_SIZE && count < 25; i++) {
+          const s = shardPool[i];
+          if (!s.active) {
+            s.active = true;
+            s.mesh.visible = true;
+            s.mesh.position.copy(centerPos);
+            s.mat.color.setHex(colorHex || 0x00ffcc);
+            s.mat.opacity = 1.0;
+            s.life = 0;
+            s.maxLife = 0.7 + Math.random() * 0.4;
+            s.vel.set((Math.random() - 0.5) * 8.0, (Math.random() - 0.5) * 8.0 + 1.8, (Math.random() - 0.5) * 8.0);
+            s.rotVel.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12);
+            count++;
+          }
+        }
+      }
+
+      function updateShards(dt) {
+        for (let i = 0; i < SHARD_POOL_SIZE; i++) {
+          const s = shardPool[i];
+          if (s.active) {
+            s.life += dt;
+            if (s.life >= s.maxLife) {
+              s.active = false;
+              s.mesh.visible = false;
+            } else {
+              s.vel.y -= 9.8 * dt * 0.5;
+              s.mesh.position.addScaledVector(s.vel, dt);
+              s.mesh.rotation.x += s.rotVel.x * dt;
+              s.mat.opacity = 1.0 - (s.life / s.maxLife);
+            }
+          }
+        }
+      }
+
+      let activeOrb = null;
+      let isSpawning = false;
+
+      // -----------------------------------------------------------------------
+      // 지구형 틸트 자전 글로브 스폰 (스피닝 + 23.4° 기울기 + 포토 격자 텍스처)
+      // -----------------------------------------------------------------------
+      function spawnNextGlobe() {
+        if (isSpawning) return;
+        isSpawning = true;
+
+        if (window.APP_STATE.isComputing && window.APP_STATE.sessionRemainingSeconds <= 0) {
+          isSpawning = false;
+          return;
+        }
+
+        if (activeOrb) {
+          if (activeOrb.state !== "IN_BOOKSHELF") scene.remove(activeOrb.flightPivot);
+          activeOrb = null;
+        }
+
+        window.APP_STATE.attemptCount = 0;
+        document.getElementById('hudAttempts').textContent = "0 / 2회 안전";
+        document.getElementById('hudAttempts').style.color = "#00ffcc";
+
+        const targetEffect = EFFECT_TYPES[Math.floor(Math.random() * EFFECT_TYPES.length)];
+        window.APP_STATE.currentTargetEffect = targetEffect;
+
+        const buttonNames = ["X", "Y", "A", "B"];
+        const shuffledEffects = [...EFFECT_TYPES].sort(() => Math.random() - 0.5);
+        const mapping = {};
+        buttonNames.forEach((btn, idx) => { mapping[btn] = shuffledEffects[idx]; });
+        window.APP_STATE.buttonMapping = mapping;
+
+        document.getElementById('hudTargetEffect').textContent = targetEffect.name;
+        const hint = document.getElementById('motionHint');
+        hint.textContent = `목표: [${targetEffect.name}] - 4사분면 터치!`;
+        hint.style.borderColor = "var(--primary)";
+
+        // 1. 비행 궤적 그룹 (위치 이동 담당)
+        const flightPivot = new THREE.Group();
+
+        // 2. 지구본 자전축 틸트 그룹 (지구 자전축 23.44도 기울기 설정)
+        const tiltGroup = new THREE.Group();
+        const EARTH_AXIAL_TILT = THREE.MathUtils.degToRad(23.44); // 약 0.409 rad
+        tiltGroup.rotation.z = -EARTH_AXIAL_TILT; // Z축으로 23.44° 기울임
+        tiltGroup.rotation.x = THREE.MathUtils.degToRad(6.0); // 입체적인 시각을 위한 미세 X 틸트
+        flightPivot.add(tiltGroup);
+
+        // 3. 자전 회전 코어 (Y축 기준으로 고속 스피닝)
+        const spinningCore = new THREE.Group();
+        tiltGroup.add(spinningCore);
+
+        // 4. 구체 메쉬 및 동적 포토 격자 텍스처 매핑
+        const globeTex = GlobeTextureGenerator.createGlobeTexture();
+        const sphereGeo = new THREE.SphereGeometry(0.9, 36, 28);
+        const sphereMat = new THREE.MeshBasicMaterial({
+          map: globeTex,
+          wireframe: false
+        });
+        const globeMesh = new THREE.Mesh(sphereGeo, sphereMat);
+        spinningCore.add(globeMesh);
+
+        // 5. 북극-남극 자전축 표시 핀 (Aurora Neon Pin)
+        const axisGeo = new THREE.CylinderGeometry(0.018, 0.018, 2.3, 12);
+        const axisMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+        const axisPin = new THREE.Mesh(axisGeo, axisMat);
+        spinningCore.add(axisPin);
+
+        // 6. 적도(Equator) 공전 궤도 링 & 자전 고리
+        const ringGeo = new THREE.TorusGeometry(1.22, 0.024, 12, 36);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xffbe0b });
+        const equatorRing = new THREE.Mesh(ringGeo, ringMat);
+        equatorRing.rotation.x = Math.PI / 2; // 적도면에 정렬
+        spinningCore.add(equatorRing);
+
+        // 비행 궤적 초기 위치 설정
+        const spawnX = (Math.random() - 0.5) * 2.2;
+        const spawnY = 1.6 + (Math.random() - 0.5) * 0.8;
+        const p0 = new THREE.Vector3(spawnX, spawnY, -24.0);
+
+        const sideSignX = Math.random() < 0.5 ? -1 : 1;
+        const passByX = sideSignX * (1.1 + Math.random() * 1.3);
+        const passByY = 1.6 + (Math.random() - 0.5) * 0.6;
+
+        const p1 = new THREE.Vector3(spawnX * 0.5, spawnY, -15.0);
+        const p2 = new THREE.Vector3(passByX * 0.6, passByY, -6.0);
+        const p3 = new THREE.Vector3(passByX * 1.2, passByY, 5.0);
+
+        flightPivot.position.copy(p0);
+        scene.add(flightPivot);
+
+        activeOrb = {
+          flightPivot: flightPivot,
+          spinningCore: spinningCore,
+          globeTex: globeTex,
+          state: "FLYING",
+          spinSpeed: 2.2 + Math.random() * 0.8, // 지구 자전 각속도
+          shrinkT: 0.0,
+          shelfFlightT: 0.0,
+          shelfStartPos: new THREE.Vector3(),
+          shelfTargetPos: new THREE.Vector3(),
+          flightT: 0.0,
+          flightDuration: 5.4 + Math.random() * 0.8,
+          p0: p0, p1: p1, p2: p2, p3: p3
+        };
+
+        isSpawning = false;
+      }
+
+      window.APP_STATE.spawnGlobeFn = spawnNextGlobe;
+      spawnNextGlobe();
+
+      // 4사분면 모바일 터치 트리거
+      window.triggerAction = function(buttonKey) {
+        if (!activeOrb || activeOrb.state !== "FLYING") return;
+        SoundEngine.init();
+
+        window.APP_STATE.attemptCount += 1;
+        const attempt = window.APP_STATE.attemptCount;
+        const mappedEffect = window.APP_STATE.buttonMapping[buttonKey];
+        const targetEffect = window.APP_STATE.currentTargetEffect;
+        const isMatch = (mappedEffect.id === targetEffect.id);
+
+        const hudAttempts = document.getElementById('hudAttempts');
+        if (attempt >= 3) {
+          SoundEngine.playDoubleWarningBeep();
+          hudAttempts.textContent = `${attempt}회차 경고! (삐-삐)`;
+          hudAttempts.style.color = "#f43f5e";
+        } else {
+          hudAttempts.textContent = `${attempt} / 2회 (안전)`;
+          hudAttempts.style.color = "#00ffcc";
+        }
+
+        if (mappedEffect.id === "SHATTER") {
+          SoundEngine.playExplosionSound();
+          spawnShatterShards(activeOrb.flightPivot.position, 0x00ffcc);
+          scene.remove(activeOrb.flightPivot);
+          activeOrb = null;
+          finishRound(isMatch, "산산조각 파괴");
+        } else if (mappedEffect.id === "SHRINK") {
+          SoundEngine.playCrumpleSound();
+          activeOrb.state = "SHRINKING";
+          activeOrb.shrinkT = 0.0;
+          finishRound(isMatch, "점으로 축소 소멸");
+        } else if (mappedEffect.id === "PASS") {
+          finishRound(isMatch, "궤적 유지 통과");
+        } else if (mappedEffect.id === "BOOKSHELF") {
+          SoundEngine.playWhooshSound();
+          const randomSlot = shelfSlots[Math.floor(Math.random() * shelfSlots.length)];
+          const targetWorldPos = randomSlot.clone().applyMatrix4(bookshelfGroup.matrixWorld);
+          activeOrb.state = "FLYING_TO_SHELF";
+          activeOrb.shelfStartPos.copy(activeOrb.flightPivot.position);
+          activeOrb.shelfTargetPos.copy(targetWorldPos);
+          activeOrb.shelfFlightT = 0.0;
+          finishRound(isMatch, "책장 안착");
+        }
+      };
+
+      function finishRound(isMatch, effectName) {
+        const hint = document.getElementById('motionHint');
+        if (isMatch) {
+          const earned = 250 * (1 + window.APP_STATE.combo);
+          window.APP_STATE.score += earned;
+          window.APP_STATE.combo += 1;
+          document.getElementById('hudScore').textContent = window.APP_STATE.score;
+          document.getElementById('hudCombo').textContent = `${window.APP_STATE.combo}x`;
+          hint.textContent = `🎯 정답 일치! [${effectName}] (+${earned}점)`;
+          hint.style.borderColor = "#00ffcc";
+        } else {
+          window.APP_STATE.combo = 0;
+          document.getElementById('hudCombo').textContent = "0x";
+          hint.textContent = `⚡ 빗나감! 선택:[${effectName}] / 목표:[${window.APP_STATE.currentTargetEffect.name}]`;
+          hint.style.borderColor = "#ffbe0b";
+        }
+      }
+
+      // 모바일 4분할 터치 이벤트 바인딩
+      document.getElementById('zone-a').addEventListener('pointerdown', (e) => { e.preventDefault(); window.triggerAction('A'); });
+      document.getElementById('zone-x').addEventListener('pointerdown', (e) => { e.preventDefault(); window.triggerAction('X'); });
+      document.getElementById('zone-b').addEventListener('pointerdown', (e) => { e.preventDefault(); window.triggerAction('B'); });
+      document.getElementById('zone-y').addEventListener('pointerdown', (e) => { e.preventDefault(); window.triggerAction('Y'); });
+
+      window.addEventListener('keydown', (e) => {
+        const k = e.key.toUpperCase();
+        if (["X", "Y", "A", "B"].includes(k)) window.triggerAction(k);
+      });
+
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      const clock = new THREE.Clock();
+
+      renderer.setAnimationLoop(() => {
+        const dt = Math.min(clock.getDelta(), 0.08);
+        updateShards(dt);
+
+        if (!activeOrb) {
+          if (!window.APP_STATE.isComputing || window.APP_STATE.sessionRemainingSeconds > 0) {
+            spawnNextGlobe();
+          }
+        }
+
+        if (activeOrb) {
+          // 지구본 자전(Spinning) - Y축 기준 회전
+          activeOrb.spinningCore.rotation.y += activeOrb.spinSpeed * dt;
+
+          if (activeOrb.state === "FLYING") {
+            activeOrb.flightT += dt / activeOrb.flightDuration;
+            const t = Math.min(activeOrb.flightT, 1.0);
+            const omt = 1 - t;
+            const pos = new THREE.Vector3()
+              .addScaledVector(activeOrb.p0, omt * omt * omt)
+              .addScaledVector(activeOrb.p1, 3 * omt * omt * t)
+              .addScaledVector(activeOrb.p2, 3 * omt * t * t)
+              .addScaledVector(activeOrb.p3, t * t * t);
+
+            activeOrb.flightPivot.position.copy(pos);
+            if (t >= 1.0 || pos.z > 5.0) spawnNextGlobe();
+          }
+          else if (activeOrb.state === "SHRINKING") {
+            activeOrb.shrinkT += dt * 3.5;
+            const scale = Math.max(0.001, 1.0 - activeOrb.shrinkT);
+            activeOrb.flightPivot.scale.set(scale, scale, scale);
+            if (activeOrb.shrinkT >= 1.0) {
+              scene.remove(activeOrb.flightPivot);
+              activeOrb = null;
+              spawnNextGlobe();
+            }
+          }
+          else if (activeOrb.state === "FLYING_TO_SHELF") {
+            activeOrb.shelfFlightT += dt * 1.8;
+            const st = Math.min(activeOrb.shelfFlightT, 1.0);
+            const ease = 1 - Math.pow(1 - st, 3);
+            activeOrb.flightPivot.position.lerpVectors(activeOrb.shelfStartPos, activeOrb.shelfTargetPos, ease);
+            const scale = 1.0 - (1.0 - 0.48) * ease;
+            activeOrb.flightPivot.scale.set(scale, scale, scale);
+            if (st >= 1.0) {
+              activeOrb.state = "IN_BOOKSHELF";
+              spawnNextGlobe();
+            }
+          }
+        }
+
+        renderer.render(scene, camera);
+      });
+    })();
+
+    // -------------------------------------------------------------------------
+    // 8. UI 대시보드 & 하단 알림창 토글
+    // -------------------------------------------------------------------------
+    const overlay = document.getElementById('dashboard-overlay');
+    const collapseBtn = document.getElementById('ui-collapse-btn');
+    collapseBtn.addEventListener('click', () => {
+      const isHidden = (overlay.style.display === 'none');
+      if (isHidden) {
+        overlay.style.display = 'flex';
+        collapseBtn.textContent = '3D 모드';
+      } else {
+        overlay.style.display = 'none';
+        collapseBtn.textContent = '대시보드';
+      }
+    });
+
+    const toggleHintBtn = document.getElementById('toggle-hint-btn');
+    const bottomBar = document.getElementById('bottom-message-bar');
+    toggleHintBtn.addEventListener('click', () => {
+      window.APP_STATE.isHintVisible = !window.APP_STATE.isHintVisible;
+      if (window.APP_STATE.isHintVisible) {
+        bottomBar.style.display = 'flex';
+        toggleHintBtn.textContent = '💬 알림 켬';
+        toggleHintBtn.classList.remove('inactive');
+      } else {
+        bottomBar.style.display = 'none';
+        toggleHintBtn.textContent = '💬 알림 끔';
+        toggleHintBtn.classList.add('inactive');
+      }
+    });
+  </script>
+</body>
+</html>
